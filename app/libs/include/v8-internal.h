@@ -7,7 +7,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 #include <type_traits>
 
 #include "v8-version.h"  // NOLINT(build/include)
@@ -21,8 +20,6 @@ class Isolate;
 
 namespace internal {
 
-class Isolate;
-
 typedef uintptr_t Address;
 static const Address kNullAddress = 0;
 
@@ -30,8 +27,9 @@ static const Address kNullAddress = 0;
  * Configuration of tagging scheme.
  */
 const int kApiSystemPointerSize = sizeof(void*);
+const int kApiTaggedSize = kApiSystemPointerSize;
 const int kApiDoubleSize = sizeof(double);
-const int kApiInt32Size = sizeof(int32_t);
+const int kApiIntSize = sizeof(int);
 const int kApiInt64Size = sizeof(int64_t);
 
 // Tag information for HeapObject.
@@ -88,19 +86,13 @@ struct SmiTagging<8> {
   }
 };
 
-#ifdef V8_COMPRESS_POINTERS
+#if defined(V8_COMPRESS_POINTERS) || defined(V8_31BIT_SMIS_ON_64BIT_ARCH)
 static_assert(
     kApiSystemPointerSize == kApiInt64Size,
     "Pointer compression can be enabled only for 64-bit architectures");
-const int kApiTaggedSize = kApiInt32Size;
+typedef SmiTagging<4> PlatformSmiTagging;
 #else
-const int kApiTaggedSize = kApiSystemPointerSize;
-#endif
-
-#ifdef V8_31BIT_SMIS_ON_64BIT_ARCH
-typedef SmiTagging<kApiInt32Size> PlatformSmiTagging;
-#else
-typedef SmiTagging<kApiTaggedSize> PlatformSmiTagging;
+typedef SmiTagging<kApiSystemPointerSize> PlatformSmiTagging;
 #endif
 
 const int kSmiShiftSize = PlatformSmiTagging::kSmiShiftSize;
@@ -125,16 +117,19 @@ class Internals {
   // These values match non-compiler-dependent values defined within
   // the implementation of v8.
   static const int kHeapObjectMapOffset = 0;
-  static const int kMapInstanceTypeOffset = 1 * kApiTaggedSize + kApiInt32Size;
-  static const int kStringResourceOffset =
-      1 * kApiTaggedSize + 2 * kApiInt32Size;
+  static const int kMapInstanceTypeOffset = 1 * kApiTaggedSize + kApiIntSize;
+  static const int kStringResourceOffset = 1 * kApiTaggedSize + 2 * kApiIntSize;
 
   static const int kOddballKindOffset = 4 * kApiTaggedSize + kApiDoubleSize;
   static const int kForeignAddressOffset = kApiTaggedSize;
   static const int kJSObjectHeaderSize = 3 * kApiTaggedSize;
   static const int kFixedArrayHeaderSize = 2 * kApiTaggedSize;
   static const int kEmbedderDataArrayHeaderSize = 2 * kApiTaggedSize;
-  static const int kEmbedderDataSlotSize = kApiSystemPointerSize;
+  static const int kEmbedderDataSlotSize =
+#ifdef V8_COMPRESS_POINTERS
+      2 *
+#endif
+      kApiSystemPointerSize;
   static const int kNativeContextEmbedderDataOffset = 7 * kApiTaggedSize;
   static const int kFullStringRepresentationMask = 0x0f;
   static const int kStringEncodingMask = 0x8;
@@ -145,7 +140,7 @@ class Internals {
 
   static const int kIsolateEmbedderDataOffset = 0;
   static const int kExternalMemoryOffset =
-      kNumIsolateDataSlots * kApiSystemPointerSize;
+      kNumIsolateDataSlots * kApiTaggedSize;
   static const int kExternalMemoryLimitOffset =
       kExternalMemoryOffset + kApiInt64Size;
   static const int kExternalMemoryAtLastMarkCompactOffset =
@@ -160,27 +155,24 @@ class Internals {
   static const int kFalseValueRootIndex = 8;
   static const int kEmptyStringRootIndex = 9;
 
-  static const int kNodeClassIdOffset = 1 * kApiSystemPointerSize;
-  static const int kNodeFlagsOffset = 1 * kApiSystemPointerSize + 3;
+  static const int kNodeClassIdOffset = 1 * kApiTaggedSize;
+  static const int kNodeFlagsOffset = 1 * kApiTaggedSize + 3;
   static const int kNodeStateMask = 0x7;
   static const int kNodeStateIsWeakValue = 2;
   static const int kNodeStateIsPendingValue = 3;
+  static const int kNodeStateIsNearDeathValue = 4;
+  static const int kNodeIsIndependentShift = 3;
+  static const int kNodeIsActiveShift = 4;
 
-  static const int kFirstNonstringType = 0x40;
-  static const int kOddballType = 0x43;
-  static const int kForeignType = 0x47;
+  static const int kFirstNonstringType = 0x80;
+  static const int kOddballType = 0x83;
+  static const int kForeignType = 0x87;
   static const int kJSSpecialApiObjectType = 0x410;
   static const int kJSApiObjectType = 0x420;
   static const int kJSObjectType = 0x421;
 
   static const int kUndefinedOddballKind = 5;
   static const int kNullOddballKind = 3;
-
-  // Constants used by PropertyCallbackInfo to check if we should throw when an
-  // error occurs.
-  static const int kThrowOnError = 0;
-  static const int kDontThrow = 1;
-  static const int kInferShouldThrowMode = 2;
 
   // Soft limit for AdjustAmountofExternalAllocatedMemory. Trigger an
   // incremental GC once the external memory reaches this limit.
@@ -211,12 +203,12 @@ class Internals {
 
   V8_INLINE static int GetInstanceType(const internal::Address obj) {
     typedef internal::Address A;
-    A map = ReadTaggedPointerField(obj, kHeapObjectMapOffset);
-    return ReadRawField<uint16_t>(map, kMapInstanceTypeOffset);
+    A map = ReadField<A>(obj, kHeapObjectMapOffset);
+    return ReadField<uint16_t>(map, kMapInstanceTypeOffset);
   }
 
   V8_INLINE static int GetOddballKind(const internal::Address obj) {
-    return SmiValue(ReadTaggedSignedField(obj, kOddballKindOffset));
+    return SmiValue(ReadField<internal::Address>(obj, kOddballKindOffset));
   }
 
   V8_INLINE static bool IsExternalTwoByteString(int instance_type) {
@@ -270,67 +262,24 @@ class Internals {
   }
 
   template <typename T>
-  V8_INLINE static T ReadRawField(internal::Address heap_object_ptr,
-                                  int offset) {
+  V8_INLINE static T ReadField(const internal::Address heap_object_ptr,
+                               int offset) {
     internal::Address addr = heap_object_ptr + offset - kHeapObjectTag;
-#ifdef V8_COMPRESS_POINTERS
-    if (sizeof(T) > kApiTaggedSize) {
-      // TODO(ishell, v8:8875): When pointer compression is enabled 8-byte size
-      // fields (external pointers, doubles and BigInt data) are only
-      // kTaggedSize aligned so we have to use unaligned pointer friendly way of
-      // accessing them in order to avoid undefined behavior in C++ code.
-      T r;
-      memcpy(&r, reinterpret_cast<void*>(addr), sizeof(T));
-      return r;
-    }
-#endif
     return *reinterpret_cast<const T*>(addr);
   }
 
-  V8_INLINE static internal::Address ReadTaggedPointerField(
-      internal::Address heap_object_ptr, int offset) {
-#ifdef V8_COMPRESS_POINTERS
-    int32_t value = ReadRawField<int32_t>(heap_object_ptr, offset);
-    internal::Address root = GetRootFromOnHeapAddress(heap_object_ptr);
-    return root + static_cast<internal::Address>(static_cast<intptr_t>(value));
-#else
-    return ReadRawField<internal::Address>(heap_object_ptr, offset);
+#ifndef V8_COMPRESS_POINTERS
+  template <typename T>
+  V8_INLINE static T ReadEmbedderData(const v8::Context* context, int index) {
+    typedef internal::Address A;
+    typedef internal::Internals I;
+    A ctx = *reinterpret_cast<const A*>(context);
+    A embedder_data = I::ReadField<A>(ctx, I::kNativeContextEmbedderDataOffset);
+    int value_offset =
+        I::kEmbedderDataArrayHeaderSize + (I::kEmbedderDataSlotSize * index);
+    return I::ReadField<T>(embedder_data, value_offset);
+  }
 #endif
-  }
-
-  V8_INLINE static internal::Address ReadTaggedSignedField(
-      internal::Address heap_object_ptr, int offset) {
-#ifdef V8_COMPRESS_POINTERS
-    int32_t value = ReadRawField<int32_t>(heap_object_ptr, offset);
-    return static_cast<internal::Address>(static_cast<intptr_t>(value));
-#else
-    return ReadRawField<internal::Address>(heap_object_ptr, offset);
-#endif
-  }
-
-#ifdef V8_COMPRESS_POINTERS
-  // See v8:7703 or src/ptr-compr.* for details about pointer compression.
-  static constexpr size_t kPtrComprHeapReservationSize = size_t{1} << 32;
-  static constexpr size_t kPtrComprIsolateRootBias =
-      kPtrComprHeapReservationSize / 2;
-  static constexpr size_t kPtrComprIsolateRootAlignment = size_t{1} << 32;
-
-  V8_INLINE static internal::Address GetRootFromOnHeapAddress(
-      internal::Address addr) {
-    return (addr + kPtrComprIsolateRootBias) &
-           -static_cast<intptr_t>(kPtrComprIsolateRootAlignment);
-  }
-
-  V8_INLINE static internal::Address DecompressTaggedAnyField(
-      internal::Address heap_object_ptr, int32_t value) {
-    internal::Address root_mask = static_cast<internal::Address>(
-        -static_cast<intptr_t>(value & kSmiTagMask));
-    internal::Address root_or_zero =
-        root_mask & GetRootFromOnHeapAddress(heap_object_ptr);
-    return root_or_zero +
-           static_cast<internal::Address>(static_cast<intptr_t>(value));
-  }
-#endif  // V8_COMPRESS_POINTERS
 };
 
 // Only perform cast check for types derived from v8::Data since
@@ -355,15 +304,6 @@ template <class T>
 V8_INLINE void PerformCastCheck(T* data) {
   CastCheck<std::is_base_of<Data, T>::value>::Perform(data);
 }
-
-// {obj} must be the raw tagged pointer representation of a HeapObject
-// that's guaranteed to never be in ReadOnlySpace.
-V8_EXPORT internal::Isolate* IsolateFromNeverReadOnlySpaceObject(Address obj);
-
-// Returns if we need to throw when an error occurs. This infers the language
-// mode based on the current context and the closure. This returns true if the
-// language mode is strict.
-V8_EXPORT bool ShouldThrowOnError(v8::internal::Isolate* isolate);
 
 }  // namespace internal
 }  // namespace v8

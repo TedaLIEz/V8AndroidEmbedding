@@ -195,6 +195,17 @@ class PersistentValueMapBase {
   }
 
   /**
+   * Call V8::RegisterExternallyReferencedObject with the map value for given
+   * key.
+   */
+  void RegisterExternallyReferencedObject(K& key) {
+    assert(Contains(key));
+    V8::RegisterExternallyReferencedObject(
+        reinterpret_cast<internal::Address*>(FromVal(Traits::Get(&impl_, key))),
+        reinterpret_cast<internal::Isolate*>(GetIsolate()));
+  }
+
+  /**
    * Return value for key and remove it from the map.
    */
   Global<V> Remove(const K& key) {
@@ -276,10 +287,7 @@ class PersistentValueMapBase {
   }
 
  protected:
-  explicit PersistentValueMapBase(Isolate* isolate)
-      : isolate_(isolate), label_(nullptr) {}
-  PersistentValueMapBase(Isolate* isolate, const char* label)
-      : isolate_(isolate), label_(label) {}
+  explicit PersistentValueMapBase(Isolate* isolate) : isolate_(isolate) {}
 
   ~PersistentValueMapBase() { Clear(); }
 
@@ -321,10 +329,6 @@ class PersistentValueMapBase {
     p.Reset();
   }
 
-  void AnnotateStrongRetainer(Global<V>* persistent) {
-    persistent->AnnotateStrongRetainer(label_);
-  }
-
  private:
   PersistentValueMapBase(PersistentValueMapBase&);
   void operator=(PersistentValueMapBase&);
@@ -341,16 +345,14 @@ class PersistentValueMapBase {
 
   Isolate* isolate_;
   typename Traits::Impl impl_;
-  const char* label_;
 };
+
 
 template <typename K, typename V, typename Traits>
 class PersistentValueMap : public PersistentValueMapBase<K, V, Traits> {
  public:
   explicit PersistentValueMap(Isolate* isolate)
       : PersistentValueMapBase<K, V, Traits>(isolate) {}
-  PersistentValueMap(Isolate* isolate, const char* label)
-      : PersistentValueMapBase<K, V, Traits>(isolate, label) {}
 
   typedef
       typename PersistentValueMapBase<K, V, Traits>::PersistentValueReference
@@ -378,9 +380,7 @@ class PersistentValueMap : public PersistentValueMapBase<K, V, Traits> {
    * by the Traits class.
    */
   Global<V> SetUnique(const K& key, Global<V>* persistent) {
-    if (Traits::kCallbackType == kNotWeak) {
-      this->AnnotateStrongRetainer(persistent);
-    } else {
+    if (Traits::kCallbackType != kNotWeak) {
       WeakCallbackType callback_type =
           Traits::kCallbackType == kWeakWithInternalFields
               ? WeakCallbackType::kInternalFields
@@ -425,8 +425,6 @@ class GlobalValueMap : public PersistentValueMapBase<K, V, Traits> {
  public:
   explicit GlobalValueMap(Isolate* isolate)
       : PersistentValueMapBase<K, V, Traits>(isolate) {}
-  GlobalValueMap(Isolate* isolate, const char* label)
-      : PersistentValueMapBase<K, V, Traits>(isolate, label) {}
 
   typedef
       typename PersistentValueMapBase<K, V, Traits>::PersistentValueReference
@@ -454,9 +452,7 @@ class GlobalValueMap : public PersistentValueMapBase<K, V, Traits> {
    * by the Traits class.
    */
   Global<V> SetUnique(const K& key, Global<V>* persistent) {
-    if (Traits::kCallbackType == kNotWeak) {
-      this->AnnotateStrongRetainer(persistent);
-    } else {
+    if (Traits::kCallbackType != kNotWeak) {
       WeakCallbackType callback_type =
           Traits::kCallbackType == kWeakWithInternalFields
               ? WeakCallbackType::kInternalFields
