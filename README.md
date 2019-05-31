@@ -5,8 +5,12 @@ with a V8 hello world example
 
 ## V8 version
 
-v7.6.90
+v7.2
 
+
+## Cloning the code
+
+You need git-lfs to clone this code
 
 ## build config for v8
 
