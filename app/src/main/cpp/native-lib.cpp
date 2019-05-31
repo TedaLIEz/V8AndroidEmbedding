@@ -27,6 +27,7 @@ Java_com_hustunique_v8demoapplication_MainActivity_initV8(JNIEnv *env, jobject /
 void runScript() {
   const char *csource = R"(
     let mycls = new MyClass('yahaha');
+    let clz = mycls.clz;
   )";
 
   // Create a stack-allocated handle scope.
@@ -62,18 +63,32 @@ Java_com_hustunique_v8demoapplication_MainActivity_stringFromJNI(JNIEnv *env, jo
 //  isolate->Enter();
   v8::Isolate::Scope isolate_scope(isolate);
   v8::HandleScope scope(isolate);
+
+
   auto ft = v8::FunctionTemplate::New(isolate);
   ft->SetClassName(v8::String::NewFromUtf8(isolate, "MyClass"));
   ft->ReadOnlyPrototype();
-  v8::Local<v8::ObjectTemplate> instance_template = ft->InstanceTemplate();
-  v8::Local<v8::ObjectTemplate> prototype_template = ft->PrototypeTemplate();
-
   ft->SetCallHandler(MyClass::constructorCallback);
   ft->SetLength(1);
-  instance_template->SetInternalFieldCount(0);
+  v8::Local<v8::ObjectTemplate> instance_template = ft->InstanceTemplate();
+  v8::Local<v8::ObjectTemplate> prototype_template = ft->PrototypeTemplate();
+  instance_template->SetInternalFieldCount(1);
 
   prototype_template->Set(v8::Symbol::GetToStringTag(isolate), v8::String::NewFromUtf8(isolate, "MyClass"),
                           static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum));
+
+  v8::Local<v8::Signature> signature = v8::Signature::New(isolate, ft);
+
+  v8::Local<v8::FunctionTemplate> getter = v8::FunctionTemplate::New(
+      isolate, MyClass::ClassGetter, v8::Local<v8::Value>(), signature, 0 );
+
+  if (!getter.IsEmpty()) {
+    getter->RemovePrototype();
+    getter->SetAcceptAnyReceiver(true);
+  }
+
+  prototype_template->SetAccessorProperty(v8::String::NewFromUtf8(isolate, "clz", v8::NewStringType::kInternalized, 3).ToLocalChecked(),
+      getter, v8::Local<v8::FunctionTemplate>(), static_cast<v8::PropertyAttribute>( v8::DontDelete));
 
   v8::Eternal<v8::FunctionTemplate> v8EventConstructor(isolate, ft);
   auto global_template = v8::ObjectTemplate::New(isolate);

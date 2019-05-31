@@ -28,7 +28,8 @@ add_library( # Sets the name of the library.
 
         # Provides a relative path to your source file(s).
         ${CMAKE_SOURCE_DIR}/src/main/cpp/native-lib.cpp
-        ${CMAKE_SOURCE_DIR}/src/main/cpp/MyClass.cc)
+        ${CMAKE_SOURCE_DIR}/src/main/cpp/MyClass.cc
+        ${CMAKE_SOURCE_DIR}/src/main/cpp/BindingBase.cc)
 
 target_include_directories( native-lib PRIVATE ${CMAKE_SOURCE_DIR}/libs/include)
 

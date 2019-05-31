@@ -7,13 +7,20 @@
 
 
 #include <v8.h>
-class MyClass {
+#include <string>
+#include "BindingBase.h"
+class MyClass : public BindingBase {
+
+
  public:
+  std::string clz;
 // This class must be static only
-  MyClass(const char* utf);
+  MyClass(std::string& utf);
 
   static void constructorCallback(const v8::FunctionCallbackInfo<v8::Value> &);
 
+
+  static void ClassGetter(const v8::FunctionCallbackInfo<v8::Value> &);
 };
 
 
